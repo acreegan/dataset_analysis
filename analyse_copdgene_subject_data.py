@@ -17,7 +17,8 @@ def run_cli():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_file", help="Subject data file for COPDGene dataset", type=str)
     parser.add_argument("--data_dict", help="Subject data dict", type=str)
-    parser.add_argument("--use_subject_list", help="Use sub list of subjects", default=False, action=argparse.BooleanOptionalAction)
+    parser.add_argument("--use_subject_list", help="Use sub list of subjects", default=False,
+                        action=argparse.BooleanOptionalAction)
     parser.add_argument("--subject_list", help="List of subjects to analyse", type=str)
     args = parser.parse_args()
 
@@ -54,7 +55,6 @@ def run_cli():
     if use_subject_list:
         data = data.loc[data["sid"].isin(subject_list["sid"])]
         fig_title = f"COPD Gene Study Participant Statistics, Subjects: {str(Path(subject_list_file).stem)}\n"
-
 
     data_dict = pd.read_excel(data_dict_file)
     data_dict = data_dict.set_index("VariableName")
@@ -107,6 +107,7 @@ def run_cli():
     fig.suptitle(fig_title)
 
     plt.show()
+
 
 def parse_discrete(coded_values: str):
     pairs = coded_values.split(" | ")
