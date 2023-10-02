@@ -127,19 +127,20 @@ def extract_zip_file(zip_file_path, output_directory):
 
     """
     succeeded = False,
-    with zipfile.ZipFile(zip_file_path, 'r') as zip_file:
-        try:
+    try:
+        with zipfile.ZipFile(zip_file_path, 'r') as zip_file:
             zip_file.extractall(str(output_directory))
             succeeded = True
-        except Exception as e:
-            pass
+    except Exception as e:
+        pass
 
     return succeeded
 
 
 def index_directory(directory, show_progress=True):
     directory_walk = []
-    for i, (dirpath, dirnames, files) in tqdm(enumerate(os.walk(directory)), desc="Indexing directory", disable=not show_progress):
+    for i, (dirpath, dirnames, files) in tqdm(enumerate(os.walk(directory)), desc="Indexing directory",
+                                              disable=not show_progress):
         directory_walk.append([PurePosixPath(Path(dirpath).relative_to(directory)), dirnames, files])
 
     return directory_walk
