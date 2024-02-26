@@ -1,6 +1,6 @@
 import argparse
 import tkinter as tk
-from tkinter.filedialog import askdirectory
+from tkinter.filedialog import askdirectory, askopenfilename
 import os
 from pathlib import Path, PurePosixPath
 from tqdm import tqdm
@@ -8,6 +8,7 @@ import zipfile
 from multiprocessing import pool
 import fnmatch
 import functools
+import numpy as np
 
 """
 Script to extract all zip files in a directory
@@ -21,6 +22,8 @@ def run_cli():
     parser = argparse.ArgumentParser()
     parser.add_argument("--zip_root", help="Directory containing zip files", type=str)
     parser.add_argument("--output_root", help="Directory in which to place extracted files", type=str)
+    parser.add_argument("--select_files", help="csv containing list of files to select", type=str)
+    parser.add_argument("--skip_files", help="csv containing list of files to skip", type=str)
     args = parser.parse_args()
 
     if args.zip_root is not None:
@@ -39,12 +42,30 @@ def run_cli():
             exit()
         output_root = Path(output_root)
 
+    if args.select_files is not None:
+        select_files = np.loadtxt(Path(args.select_files),dtype=str, delimiter=",")
+    else:
+        tk.Tk().withdraw()
+        if not (select_files := askopenfilename(title="Select select files list (or cancel to continue)")):
+            select_files = None
+        else:
+            select_files = np.loadtxt(Path(select_files),dtype=str, delimiter=",")
+
+    if args.skip_files is not None:
+        skip_files = np.loadtxt(Path(args.skip_files),dtype=str, delimiter=",")
+    else:
+        tk.Tk().withdraw()
+        if not (skip_files := askopenfilename(title="Select skip files list (or cancel to continue)")):
+            skip_files = None
+        else:
+            skip_files = np.loadtxt(Path(skip_files),dtype=str, delimiter=",")
+
     print(f"Extracting zip files in: {zip_root}\nto {output_root}")
-    extract_zip_directory(zip_root, output_root, pool.Pool())
+    extract_zip_directory(zip_root, output_root, pool.Pool(), skip_files=skip_files, select_files=select_files)
     # extract_zip_directory(zip_root, output_root, mpool=None)
 
 
-def extract_zip_directory(zip_root: Path, output_root: Path, mpool: pool.Pool):
+def extract_zip_directory(zip_root: Path, output_root: Path, mpool: pool.Pool, skip_files: list = None, select_files: list = None):
     """
     Workflow for extract zip directory. Index directory to find files first, then run extraction task
 
@@ -61,16 +82,19 @@ def extract_zip_directory(zip_root: Path, output_root: Path, mpool: pool.Pool):
         if not os.path.exists(output_root / dirpath):
             os.makedirs(output_root / dirpath)
 
-    succeeded_files = extract_zip_files(zip_root, output_root, directory_index, mpool)
-    failed_files = [file for suceeded, file in succeeded_files if not suceeded]
+    results = extract_zip_files(zip_root, output_root, directory_index, mpool, skip_files=skip_files, select_files=select_files)
+    failed_files = [(file, exception) for exception, file in results if exception is not None]
+    succeeded_files = [str(PurePosixPath(file)) for exception, file in results if exception is None]
 
     if failed_files:
         print(f"Failed to extract: {failed_files}")
+        fname = str(Path(__file__).parent / "test_data" / "succeeded_files.csv")
+        np.savetxt(fname, np.array(succeeded_files), fmt="%s", delimiter=",")
     else:
         print("All files extracted successfully")
 
 
-def extract_zip_files(zip_root: Path, output_root: Path, directory_index, mpool: pool.Pool):
+def extract_zip_files(zip_root: Path, output_root: Path, directory_index, mpool: pool.Pool, skip_files: list = None, select_files: list=None):
     """
     Extraction task for workflow. Flatten file list then distribute them to the worker function
 
@@ -80,27 +104,35 @@ def extract_zip_files(zip_root: Path, output_root: Path, directory_index, mpool:
     output_root
     directory_index
     mpool
+    skip
+        list of zip files to skip
 
     Returns
     -------
 
     """
+    if skip_files is None:
+        skip_files = []
     # Get a flat list of all the zip files
     files_list = []  # List of tuples with zip path and output path
     for dirpath, _, files in directory_index:
         if len(zip_files := fnmatch.filter(files, "*.zip")) > 0:
             for zip_file in zip_files:
-                files_list.append((zip_root / dirpath / zip_file, output_root / dirpath))
+                if np.any([len(fnmatch.filter([zip_file], f"*{pat}*")) > 0 for pat in select_files]):
+                    if zip_file not in [PurePosixPath(s).parts[-1] for s in skip_files]:
+                        files_list.append((zip_root / dirpath / zip_file, output_root / dirpath))
 
     if mpool is None:
-        succeeded = []
+        results = []
         for zip_file, output_directory in tqdm(files_list, desc="Extracting files"):
-            s = extract_zip_file((zip_file, output_directory))
-            succeeded.append(s)
+            r = extract_zip_file((zip_file, output_directory))
+            results.append(r)
     else:
-        succeeded = tqdm(mpool.imap(extract_zip_file, files_list), desc="Extracting files", total=len(files_list))
+        results_it = tqdm(mpool.imap(extract_zip_file, files_list, chunksize=2), desc="Extracting files",
+                          total=len(files_list))
+        results = list(results_it)
 
-    return zip(succeeded, files_list)
+    return results
 
 
 def args_unpacker(func):
@@ -126,15 +158,14 @@ def extract_zip_file(zip_file_path, output_directory):
     -------
 
     """
-    succeeded = False,
+    exception = None
     try:
         with zipfile.ZipFile(zip_file_path, 'r') as zip_file:
             zip_file.extractall(str(output_directory))
-            succeeded = True
     except Exception as e:
-        pass
+        exception = e
 
-    return succeeded
+    return exception, zip_file_path
 
 
 def index_directory(directory, show_progress=True):
